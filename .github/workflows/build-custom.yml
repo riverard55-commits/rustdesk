@@ -3,96 +3,10 @@ name: Build SOPMEX Remote
 on:
   workflow_dispatch:
 
-env:
-  FLUTTER_VERSION: "3.24.5"
-  VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
-  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
-
 jobs:
-  build-windows:
-    name: Build Windows x64
-    runs-on: windows-2022
-    steps:
-      - name: Export GitHub Actions cache environment variables
-        uses: actions/github-script@v6
-        with:
-          script: |
-            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
-            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
-
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-pc-windows-msvc
-          components: rustfmt
-
-      - name: Setup vcpkg with Github Actions binary cache
-        uses: lukka/run-vcpkg@v11
-        with:
-          vcpkgDirectory: C:\vcpkg
-          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
-          doNotCache: false
-
-      - name: Install vcpkg dependencies
-        run: |
-          $VCPKG_ROOT/vcpkg install --triplet x64-windows-static --x-install-root="$VCPKG_ROOT/installed"
-        shell: bash
-
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: "stable"
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
-
-      - name: Install Flutter Rust Bridge dependencies
-        run: |
-          cargo install flutter_rust_bridge_codegen --version 2.0.0 --features uuid
-          Push-Location flutter ; flutter pub get ; Pop-Location
-        shell: pwsh
-
-      - name: Generate bridge
-        run: |
-          ~/.cargo/bin/flutter_rust_bridge_codegen generate
-        shell: bash
-
-      - name: Setup NASM
-        uses: ilammy/setup-nasm@v1
-
-      - name: Install LLVM
-        uses: KyleMayes/install-llvm-action@v1
-        with:
-          version: "18"
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Build RustDesk
-        shell: pwsh
-        run: |
-          flutter precache --windows
-          Invoke-WebRequest -Uri https://github.com/AnyWareFx/GPU/releases/download/Libs/AnyDesk.GPU.zip -OutFile AnyDesk.GPU.zip
-          Expand-Archive -Path AnyDesk.GPU.zip -DestinationPath AnyDesk.GPU
-          $env:PATH = "$(Get-Location)\AnyDesk.GPU;$env:PATH"
-          $env:VCPKG_ROOT = "C:\vcpkg"
-          $env:LIBCLANG_PATH = "C:\Program Files\LLVM\bin"
-          python build.py --portable --hwcodec --flutter --vram --skip-portable-pack
-
-      - name: Create portable zip
-        shell: pwsh
-        run: |
-          Compress-Archive -Path flutter\build\windows\x64\runner\Release\* -DestinationPath sopmex-remote-windows-x64.zip
-
-      - name: Upload Windows artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: sopmex-remote-windows-x64
-          path: sopmex-remote-windows-x64.zip
-          retention-days: 30
+  build-sopmex:
+    uses: ./.github/workflows/flutter-build.yml
+    secrets: inherit
+    with:
+      upload-artifact: true
+      upload-tag: "sopmex"

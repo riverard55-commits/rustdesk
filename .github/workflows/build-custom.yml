@@ -1,0 +1,79 @@
+name: Build SOPMEX Remote
+
+on:
+  workflow_dispatch:
+
+env:
+  FLUTTER_VERSION: "3.24.5"
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+  CARGO_NDK_VERSION: "3.5.7"
+
+jobs:
+  build-windows:
+    name: Build Windows x64
+    runs-on: windows-2022
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup vcpkg with GitHub Actions cache
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: 55f734b5bc31816b060a89b3dc4868e66ea9fa97
+
+      - name: Install vcpkg dependencies
+        run: |
+          $VCPKG_ROOT/vcpkg install --triplet x64-windows-static --x-install-root="$VCPKG_ROOT/installed"
+        shell: bash
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-action@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+          components: rustfmt
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Setup NASM
+        uses: ilammy/setup-nasm@v1
+
+      - name: Install LLVM
+        uses: KyleMayes/install-llvm-action@v1
+        with:
+          version: "18"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build RustDesk
+        shell: bash
+        run: |
+          flutter precache --windows
+          curl -L https://github.com/AnyWareFx/GPU/releases/download/Libs/AnyDesk.GPU.zip -o AnyDesk.GPU.zip
+          unzip AnyDesk.GPU.zip -d AnyDesk.GPU
+          export PATH="$(pwd)/AnyDesk.GPU:$PATH"
+          export VCPKG_ROOT="$VCPKG_INSTALLATION_ROOT"
+          export LIBCLANG_PATH="C:/Program Files/LLVM/bin"
+          python3 build.py --portable --hwcodec --flutter --vram --skip-portable-pack
+
+      - name: Create portable zip
+        shell: bash
+        run: |
+          cd flutter/build/windows/x64/runner/Release
+          7z a -r ../../../../../../sopmex-remote-windows-x64.zip *
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sopmex-remote-windows-x64
+          path: sopmex-remote-windows-x64.zip
+          retention-days: 30

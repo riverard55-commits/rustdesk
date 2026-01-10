@@ -442,24 +442,30 @@ def build_flutter_windows(version, features, skip_portable_pack):
     os.chdir('..')
     shutil.copy2('target/release/deps/dylib_virtual_display.dll',
                  flutter_build_dir_2)
+    # Rename exe to match APP_NAME
+    app_name = "SOPMEX Remote"
+    old_exe = f'{flutter_build_dir_2}/rustdesk.exe'
+    new_exe = f'{flutter_build_dir_2}/{app_name}.exe'
+    if os.path.exists(old_exe):
+        shutil.move(old_exe, new_exe)
     if skip_portable_pack:
         return
     os.chdir('libs/portable')
     system2('pip3 install -r requirements.txt')
     system2(
-        f'python3 ./generate.py -f ../../{flutter_build_dir_2} -o . -e ../../{flutter_build_dir_2}/rustdesk.exe')
+        f'python3 ./generate.py -f ../../{flutter_build_dir_2} -o . -e "../../{flutter_build_dir_2}/{app_name}.exe"')
     os.chdir('../..')
-    if os.path.exists('./rustdesk_portable.exe'):
+    if os.path.exists('./sopmex-remote_portable.exe'):
         os.replace('./target/release/rustdesk-portable-packer.exe',
-                   './rustdesk_portable.exe')
+                   './sopmex-remote_portable.exe')
     else:
         os.rename('./target/release/rustdesk-portable-packer.exe',
-                  './rustdesk_portable.exe')
+                  './sopmex-remote_portable.exe')
     print(
-        f'output location: {os.path.abspath(os.curdir)}/rustdesk_portable.exe')
-    os.rename('./rustdesk_portable.exe', f'./rustdesk-{version}-install.exe')
+        f'output location: {os.path.abspath(os.curdir)}/sopmex-remote_portable.exe')
+    os.rename('./sopmex-remote_portable.exe', f'./sopmex-remote-{version}-install.exe')
     print(
-        f'output location: {os.path.abspath(os.curdir)}/rustdesk-{version}-install.exe')
+        f'output location: {os.path.abspath(os.curdir)}/sopmex-remote-{version}-install.exe')
 
 
 def main():

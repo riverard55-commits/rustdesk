@@ -1085,12 +1085,14 @@ fn get_api_server_(api: String, custom: String) -> String {
             return format!("http://{}", s);
         }
     }
-    "https://admin.rustdesk.com".to_owned()
+    // Custom build - no fallback to rustdesk.com
+    "".to_owned()
 }
 
 #[inline]
 pub fn is_public(url: &str) -> bool {
-    url.contains("rustdesk.com/") || url.ends_with("rustdesk.com")
+    // Custom build - disabled
+    false
 }
 
 pub fn get_udp_punch_enabled() -> bool {

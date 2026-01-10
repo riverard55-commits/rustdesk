@@ -5,28 +5,25 @@ on:
 
 env:
   FLUTTER_VERSION: "3.24.5"
+  VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
-  CARGO_NDK_VERSION: "3.5.7"
 
 jobs:
   build-windows:
     name: Build Windows x64
     runs-on: windows-2022
     steps:
+      - name: Export GitHub Actions cache environment variables
+        uses: actions/github-script@v6
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
-
-      - name: Setup vcpkg with GitHub Actions cache
-        uses: lukka/run-vcpkg@v11
-        with:
-          vcpkgGitCommitId: 55f734b5bc31816b060a89b3dc4868e66ea9fa97
-
-      - name: Install vcpkg dependencies
-        run: |
-          $VCPKG_ROOT/vcpkg install --triplet x64-windows-static --x-install-root="$VCPKG_ROOT/installed"
-        shell: bash
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -34,12 +31,35 @@ jobs:
           targets: x86_64-pc-windows-msvc
           components: rustfmt
 
+      - name: Setup vcpkg with Github Actions binary cache
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgDirectory: C:\vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: false
+
+      - name: Install vcpkg dependencies
+        run: |
+          $VCPKG_ROOT/vcpkg install --triplet x64-windows-static --x-install-root="$VCPKG_ROOT/installed"
+        shell: bash
+
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: "stable"
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
+
+      - name: Install Flutter Rust Bridge dependencies
+        run: |
+          cargo install flutter_rust_bridge_codegen --version 2.0.0 --features uuid
+          Push-Location flutter ; flutter pub get ; Pop-Location
+        shell: pwsh
+
+      - name: Generate bridge
+        run: |
+          ~/.cargo/bin/flutter_rust_bridge_codegen generate
+        shell: bash
 
       - name: Setup NASM
         uses: ilammy/setup-nasm@v1
@@ -55,21 +75,20 @@ jobs:
           python-version: "3.11"
 
       - name: Build RustDesk
-        shell: bash
+        shell: pwsh
         run: |
           flutter precache --windows
-          curl -L https://github.com/AnyWareFx/GPU/releases/download/Libs/AnyDesk.GPU.zip -o AnyDesk.GPU.zip
-          unzip AnyDesk.GPU.zip -d AnyDesk.GPU
-          export PATH="$(pwd)/AnyDesk.GPU:$PATH"
-          export VCPKG_ROOT="$VCPKG_INSTALLATION_ROOT"
-          export LIBCLANG_PATH="C:/Program Files/LLVM/bin"
-          python3 build.py --portable --hwcodec --flutter --vram --skip-portable-pack
+          Invoke-WebRequest -Uri https://github.com/AnyWareFx/GPU/releases/download/Libs/AnyDesk.GPU.zip -OutFile AnyDesk.GPU.zip
+          Expand-Archive -Path AnyDesk.GPU.zip -DestinationPath AnyDesk.GPU
+          $env:PATH = "$(Get-Location)\AnyDesk.GPU;$env:PATH"
+          $env:VCPKG_ROOT = "C:\vcpkg"
+          $env:LIBCLANG_PATH = "C:\Program Files\LLVM\bin"
+          python build.py --portable --hwcodec --flutter --vram --skip-portable-pack
 
       - name: Create portable zip
-        shell: bash
+        shell: pwsh
         run: |
-          cd flutter/build/windows/x64/runner/Release
-          7z a -r ../../../../../../sopmex-remote-windows-x64.zip *
+          Compress-Archive -Path flutter\build\windows\x64\runner\Release\* -DestinationPath sopmex-remote-windows-x64.zip
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4

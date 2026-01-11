@@ -1078,6 +1078,11 @@ fn get_api_server_(api: String, custom: String) -> String {
     }
     let s0 = get_custom_rendezvous_server(custom);
     if !s0.is_empty() {
+        // SOPMEX: Use HTTPS for remote.sopmex.net
+        if s0.contains("sopmex.net") {
+            let host = s0.split(':').next().unwrap_or(&s0);
+            return format!("https://{}", host);
+        }
         let s = crate::increase_port(&s0, -2);
         if s == s0 {
             return format!("http://{}:{}", s, config::RENDEZVOUS_PORT - 2);

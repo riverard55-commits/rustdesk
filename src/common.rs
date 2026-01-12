@@ -1090,12 +1090,14 @@ fn get_api_server_(api: String, custom: String) -> String {
             return format!("http://{}", s);
         }
     }
-    "https://admin.rustdesk.com".to_owned()
+    // SOPMEX: Default API server
+    "https://remote.sopmex.net".to_owned()
 }
 
 #[inline]
 pub fn is_public(url: &str) -> bool {
     url.contains("rustdesk.com/") || url.ends_with("rustdesk.com")
+        || url.contains("sopmex.net/") || url.ends_with("sopmex.net")
 }
 
 pub fn get_udp_punch_enabled() -> bool {

@@ -1,0 +1,281 @@
+name: SOPMEX Remote Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'Platforms to build'
+        required: false
+        default: 'windows,android'
+        type: choice
+        options:
+          - windows
+          - android
+          - windows,android
+          - all
+
+env:
+  RUST_VERSION: "1.75"
+  MAC_RUST_VERSION: "1.81"
+  CARGO_NDK_VERSION: "3.1.2"
+  LLVM_VERSION: "15.0.6"
+  FLUTTER_VERSION: "3.24.5"
+  ANDROID_FLUTTER_VERSION: "3.24.5"
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+  VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
+  VERSION: "1.4.5"
+  NDK_VERSION: "r27c"
+
+jobs:
+  generate-bridge:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake gcc git curl wget nasm yasm libgtk-3-dev ninja-build
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: "rustfmt"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: bridge-${{ env.RUST_VERSION }}
+
+      - name: Install flutter
+        uses: subosito/flutter-action@v2.12.0
+        with:
+          channel: "stable"
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Build rustdesk lib
+        run: |
+          ./build.py --flutter --hwcodec
+
+      - name: Upload bridge files
+        uses: actions/upload-artifact@master
+        with:
+          name: bridge-artifact
+          path: |
+            ./flutter/lib/generated_bridge.dart
+            ./flutter/lib/generated_bridge.freezed.dart
+            ./src/bridge_generated.rs
+            ./src/bridge_generated.io.rs
+
+  build-rustdesktemptopmostwindow:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Build RustDeskTempTopMostWindow
+        run: |
+          cd libs/RustDeskTempTopMostWindow
+          msbuild RustDeskTempTopMostWindow.sln /p:Configuration=Release /p:Platform=x64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@master
+        with:
+          name: topmostwindow
+          path: libs/RustDeskTempTopMostWindow/x64/Release/RustDeskTempTopMostWindow.exe
+
+  build-windows:
+    name: Build Windows x64
+    needs: [generate-bridge, build-rustdesktemptopmostwindow]
+    runs-on: windows-2022
+    steps:
+      - name: Export GitHub Actions cache environment variables
+        uses: actions/github-script@v6
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Checkout source code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Restore bridge files
+        uses: actions/download-artifact@master
+        with:
+          name: bridge-artifact
+          path: ./
+
+      - name: Restore topmostwindow
+        uses: actions/download-artifact@master
+        with:
+          name: topmostwindow
+          path: ./libs/RustDeskTempTopMostWindow/
+
+      - name: Install LLVM and Clang
+        uses: KyleMayes/install-llvm-action@v1
+        with:
+          version: ${{ env.LLVM_VERSION }}
+
+      - name: Install flutter
+        uses: subosito/flutter-action@v2.12.0
+        with:
+          channel: "stable"
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+
+      - name: Replace engine with rustdesk custom flutter engine
+        run: |
+          flutter doctor -v
+          flutter precache --windows
+          Invoke-WebRequest -Uri https://github.com/rustdesk/engine/releases/download/main/windows-x64-release.zip -OutFile windows-x64-release.zip
+          Expand-Archive -Path windows-x64-release.zip -DestinationPath windows-x64-release
+          mv -Force windows-x64-release/*  C:/hostedtoolcache/windows/flutter/stable-${{ env.FLUTTER_VERSION }}-x64/bin/cache/artifacts/engine/windows-x64-release/
+
+      - name: Patch flutter
+        shell: bash
+        run: |
+          cp .github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff $(dirname $(dirname $(which flutter)))
+          cd $(dirname $(dirname $(which flutter)))
+          [[ "3.24.5" == ${{env.FLUTTER_VERSION}} ]] && git apply flutter_3.24.4_dropdown_menu_enableFilter.diff
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: x86_64-pc-windows-msvc
+          components: "rustfmt"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: windows-2022
+
+      - name: Setup vcpkg with Github Actions binary cache
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgDirectory: C:\vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: false
+
+      - name: Install vcpkg dependencies
+        env:
+          VCPKG_DEFAULT_HOST_TRIPLET: x64-windows-static
+        run: |
+          if ! $VCPKG_ROOT/vcpkg \
+            install \
+            --triplet x64-windows-static \
+            --x-install-root="$VCPKG_ROOT/installed"; then
+            find "${VCPKG_ROOT}/" -name "*.log" | while read -r _1; do
+              echo "$_1:"
+              cat "$_1"
+            done
+            exit 1
+          fi
+        shell: bash
+
+      - name: Build rustdesk
+        run: |
+          python3 .\build.py --portable --hwcodec --flutter --feature IddDriver
+        shell: bash
+
+      - name: Build SOPMEX Remote installer
+        run: |
+          pushd ./libs/portable
+          pip3 install -r requirements.txt
+          python3 ./generate.py -f ../../flutter/build/windows/x64/runner/Release/ -o . -e ../../flutter/build/windows/x64/runner/Release/rustdesk.exe
+          popd
+        shell: bash
+
+      - name: Rename outputs
+        run: |
+          mv ./target/release/rustdesk-portable-packer.exe ./sopmex-remote-${{ env.VERSION }}-x86_64.exe
+          mv ./libs/portable/Output/rustdesk-${{ env.VERSION }}-x86_64.exe ./sopmex-remote-${{ env.VERSION }}-x86_64-setup.exe || true
+        shell: bash
+
+      - name: Zip portable version
+        run: |
+          cd flutter/build/windows/x64/runner/Release
+          7z a -r ../../../../../../sopmex-remote-${{ env.VERSION }}-windows-x64.zip *
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sopmex-remote-windows-x64
+          path: |
+            sopmex-remote-*.exe
+            sopmex-remote-*.zip
+
+  build-android:
+    name: Build Android
+    needs: [generate-bridge]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Restore bridge files
+        uses: actions/download-artifact@master
+        with:
+          name: bridge-artifact
+          path: ./
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake gcc git curl wget nasm yasm libgtk-3-dev ninja-build libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android
+          components: "rustfmt"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: android
+
+      - name: Install flutter
+        uses: subosito/flutter-action@v2.12.0
+        with:
+          channel: "stable"
+          flutter-version: ${{ env.ANDROID_FLUTTER_VERSION }}
+          cache: true
+
+      - uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: ${{ env.NDK_VERSION }}
+          add-to-path: true
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --version ${{ env.CARGO_NDK_VERSION }}
+
+      - name: Build Android ARM64
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          rustup target add aarch64-linux-android
+          ./flutter/ndk_arm64.sh
+
+      - name: Build Flutter APK
+        working-directory: flutter
+        run: |
+          flutter build apk --release --target-platform android-arm64
+
+      - name: Rename APK
+        run: |
+          mv flutter/build/app/outputs/flutter-apk/app-release.apk sopmex-remote-${{ env.VERSION }}-android-arm64.apk
+
+      - name: Upload Android artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sopmex-remote-android
+          path: sopmex-remote-*.apk

@@ -4,7 +4,7 @@ project(sopmex-remote LANGUAGES CXX)
 
 # The name of the executable created for the application. Change this to change
 # the on-disk name of your application.
-set(BINARY_NAME "SOPMEX Remote")
+set(BINARY_NAME "SOPMEX-Remote")
 
 # Explicitly opt into modern CMake behaviors to avoid warnings with recent
 # versions of CMake.
